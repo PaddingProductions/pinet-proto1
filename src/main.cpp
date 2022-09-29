@@ -14,7 +14,7 @@ int main(int argc, const char * argv[]) {
     std::cin >> username;
     printf("\n");
     
-    printf("Starting program as '%s'...\n ", username.c_str());
+    printf("Starting program as '%s'...\n", username.c_str());
     Pinet pinet = Pinet(username, 8080);
     // Enter main loop
     while (true) {

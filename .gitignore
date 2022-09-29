@@ -2,3 +2,6 @@
 
 # Ignore compiler outputs
 out/*
+
+# Ignore vim's '.swp' files
+src/*.swp

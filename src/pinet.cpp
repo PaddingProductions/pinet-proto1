@@ -98,7 +98,12 @@ std::string Pinet::raw_await() {
         pinethdr* pinet_hdr = (pinethdr*) packet + sizeof(ethhdr);
 
         // Check identifier (to filter out non-pinet packets)
-        if (pinet_hdr->identifier[0] != 0xff || pinet_hdr->identifier[1] != 0xff || pinet_hdr->identifier[2] != 0xff  || pinet_hdr->identifier[3] != 0xff) 
+	// Debug: print out header
+	printf("Receieved Packet - Header: ");
+	for (int i=0; i<4; i++) 
+		printf("%.2X:", pinet_hdr->identifier[i]);
+	printf("\n");
+	if (pinet_hdr->identifier[0] != 0xff || pinet_hdr->identifier[1] != 0xff || pinet_hdr->identifier[2] != 0xff  || pinet_hdr->identifier[3] != 0xff) 
             continue;
         
         // Extract Payload
