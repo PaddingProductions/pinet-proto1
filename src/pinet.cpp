@@ -25,7 +25,7 @@
 
 struct pinethdr {
     unsigned char identifier[4];
-    unsigned char payload_size[4];
+    unsigned int payload_size;
 };
 
 Pinet::Pinet (std::string username, int listen_port) : USERNAME(username), TCP_LISTEN_PORT(listen_port) {};
@@ -102,19 +102,20 @@ std::string Pinet::raw_await() {
 	if (pinet_hdr->identifier[0] != 0xff || pinet_hdr->identifier[1] != 0xff || pinet_hdr->identifier[2] != 0xff  || pinet_hdr->identifier[3] != 0xff)
 		continue;
 
-	// PINET HEADER - Fetch size of payloa         
-        int payload_size = (pinet_hdr->payload_size[0]) | (pinet_hdr->payload_size[1] >> 8) | (pinet_hdr->payload_size[2] >> 16) | (pinet_hdr->payload_size[3] >> 24);
-	
+	// PINET HEADER - Fetch size of payload        
+	unsigned int payload_size = ntohl(pinet_hdr->payload_size);
+	unsigned int payload_len = packet_len - sizeof(pinethdr) - sizeof(ethhdr);
+
 	// Extract Payload
-        char* payload = (char*) (payload + sizeof(pinethdr));
+        char* payload = (char*) (pinet_hdr + sizeof(pinethdr));
         
 	// Print out Ethernet header
         printf("\nEthernet Header\n");
         printf("\t|-Source Address : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n",eth->h_source[0],eth->h_source[1],eth->h_source[2],eth->h_source[3],eth->h_source[4],eth->h_source[5]);
         printf("\t|-Destination Address : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n",eth->h_dest[0],eth->h_dest[1],eth->h_dest[2],eth->h_dest[3],eth->h_dest[4],eth->h_dest[5]);
         printf("\t|-Protocol : %d\n",eth->h_proto);
-	printf("\t|-Payload size: %d, %d", payload_size, strlen(payload));
-        return std::string(payload);
+	printf("\t|-Packet size: %d, Payload size: %d, %d\n", packet_len, payload_len, payload_size);
+        return std::string(payload, payload_size);
     }
 }
 
@@ -195,10 +196,7 @@ int Pinet::raw_broadcast() {
 
     // PINET header - sie
     int payload_size = message.size();
-    pinet_hdr->payload_size[0] = (payload_size >> 24) & 0xff;
-    pinet_hdr->payload_size[1] = (payload_size >> 16) & 0xff;
-    pinet_hdr->payload_size[2] = (payload_size >> 8) & 0xff;
-    pinet_hdr->payload_size[3] = payload_size & 0xff;
+    pinet_hdr->payload_size = htonl(payload_size);
 
     // Write message 
     char* payload = (char *)pinet_hdr + sizeof(pinethdr);
