@@ -22,11 +22,27 @@
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <netinet/ip.h>
+#include <list>
 
-struct pinethdr {
-    unsigned char identifier[4];
+struct Pinet::broadcast_hdr {
     unsigned int payload_size;
+    unsigned int ip_addr;
+    unsigned short tcp_listen_port;
 };
+
+std::vector<std::string> args split_message(std::string str, int length) {
+    std::vector<std::string> args (3);
+    int prev, pos = -1;
+
+    for (int i=0; i<length; i++) { 
+        pos = str.find(';', p);
+        if (pos != std::string::npos) 
+            break;
+        args[i] = str.substr(prev+1, i);
+        prev = pos;    
+    }
+    return args;
+}
 
 Pinet::Pinet (std::string username, int listen_port) : USERNAME(username), TCP_LISTEN_PORT(listen_port) {};
 
@@ -79,7 +95,7 @@ int Pinet::raw_start_socket() {
     return 0;
 }
 
-std::string Pinet::raw_await() {
+char* Pinet::raw_await() {
     //Receive a network packet and copy in to buffer
     char packet[1024] = { 0 };
     sockaddr source_addr;
@@ -95,30 +111,61 @@ std::string Pinet::raw_await() {
         // Extract Ethernet header 
         ethhdr *eth = (ethhdr *)(packet);
 
+        // Check identifier (Ethertype) (filter out non-pinet protocl packets)
+	    if (eth->h_proto[0] != 0x00 || pinet_hdr->h_proto[1] != 0x00 || pinet_hdr->h_proto[2] != 0xff  || pinet_hdr->h_proto[3] != 0xff)
+		    continue;
+
         // Extract Pinet header
         pinethdr* pinet_hdr = (pinethdr*)(packet + sizeof(ethhdr));
 
-        // PINET HEADER - Check identifier (to filter out non-pinet packets)
-	if (pinet_hdr->identifier[0] != 0xff || pinet_hdr->identifier[1] != 0xff || pinet_hdr->identifier[2] != 0xff  || pinet_hdr->identifier[3] != 0xff)
-		continue;
-
-	// PINET HEADER - Fetch size of payload        
-	unsigned int payload_size = ntohl(pinet_hdr->payload_size);
-	unsigned int payload_len = packet_len - sizeof(pinethdr) - sizeof(ethhdr);
-
-	// Extract Payload
-        char* payload = (char*) (pinet_hdr + sizeof(pinethdr));
-        
-	// Print out Ethernet header
-        printf("\nEthernet Header\n");
+	    // PINET HEADER - Fetch size of payload        
+	    unsigned int payload_size = ntohl(pinet_hdr->payload_size);
+	    unsigned int payload_len = packet_len - sizeof(pinethdr) - sizeof(ethhdr);
+ 
+	    // Print out Ethernet header
+        printf("\nPinet L2 broadcast received: Ethernet Header:\n");
         printf("\t|-Source Address : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n",eth->h_source[0],eth->h_source[1],eth->h_source[2],eth->h_source[3],eth->h_source[4],eth->h_source[5]);
         printf("\t|-Destination Address : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n",eth->h_dest[0],eth->h_dest[1],eth->h_dest[2],eth->h_dest[3],eth->h_dest[4],eth->h_dest[5]);
         printf("\t|-Protocol : %d\n",eth->h_proto);
-	printf("\t|-Packet size: %d, Payload size: %d, %d\n", packet_len, payload_len, payload_size);
-        return std::string(payload, payload_size);
+	    printf("\t|-Packet size (raw): %d\n", packet_len); 
+
+        return (char*) pinet_hdr;
     }
 }
 
+int Pinet::L2_broadcast_process (char* raw_packet) {
+    PINET::broadcast_hdr* hdr = (Pinet::broadcast_hdr*) raw_packet;
+
+    // Extract Header Info
+    u_int32_t peer_ip_addr = ntohl(hdr->ip_addr);
+    u_int32_t payload_size = ntohl(hdr->payload_size);
+     
+    // Extract tcp listen port from header.
+    u_int16_t port = ntohs(hdr->tcp_listen_port);
+
+    // Extract username from payload, terminated by \0
+    char* payload = raw_packet + sizeof(Pinet::broadcast_hdr);
+    unsigned int name_len = 0;
+    while (name_len<payload_len && payload[name_len] != '\0') name_len++;
+    std::string peer_name = std::string(packet, name_len);
+
+    // Extract broadcast message from payload, terminated by \0
+    char* message = payload + name_len;
+    unsigned int message_len = payload_size - name_len;
+    std::string message = (payload, message_len);
+   
+
+    // Log broadcast packets 
+    char ip_addr_str [INET_ADDRSTRLEN];
+    inet_pton(AF_INET, sin->sin_addr, ip_addr_str, sizeof (ip_addr_str));
+
+    printf("\nBroadcast data:\n");
+    printf("\t|-Node Address: %s:%d\n", ip_addr_str, peer_listen_port);
+    printf("\t|-Node Name: %s\n", peer_name);   
+    printf("\t|-Broadcasted Message: %s\n", message);
+
+    return 0;
+}
 
 int Pinet::tcp_connect_to(std::string peer) {
     return 0;
@@ -131,21 +178,21 @@ int Pinet::tcp_send_to(std::string peer, std::string message) {
     return 0;
 }
 int Pinet::raw_broadcast() {
-    std::string message = "Hello Wireshark from PI!!!";
+    // Construct Payload (Message)
+    std::string message = USERNAME + '\0' + "Hello PINET from " + USERNAMEi + "!\0";
     
 
     // get the index number of the current interface 
     const char *interface_name = "wlan0"; 
     ifreq ifr = {0};
     strncpy(ifr.ifr_name, interface_name, strlen(interface_name));
-    if (ioctl(raw_socket, SIOCGIFINDEX, &ifr) < 0) {
+    if (ioctl(raw_socket, SIOCGIFINDEX, &ifr) < 0) 
+        printf("unable to get index of interface\n");   
+    // get IP address of the interface
+    if (ioctl(raw_socket, SIOCGIFADDR, &ifr) < 0) {
         printf("unable to get index of interface\n");   
     }
-    int ifindex = ifr.ifr_ifindex;
-
-	// get the MAC address of the interface
-    ifreq if_mac = {0};
-	strncpy(if_mac.ifr_name, interface_name, strlen(interface_name));
+	// get MAC address of the interface
 	if (ioctl(raw_socket, SIOCGIFHWADDR, &if_mac) < 0)
 	    perror("SIOCGIFHWADDR");
     
@@ -154,7 +201,7 @@ int Pinet::raw_broadcast() {
      
     dest_addr.sll_family = AF_PACKET;    
     dest_addr.sll_pkttype = (PACKET_BROADCAST);
-    dest_addr.sll_ifindex = ifindex;    
+    dest_addr.sll_ifindex = ifr->ifindex;    
     dest_addr.sll_halen = ETH_ALEN;
     dest_addr.sll_addr[0] = 0xff;
     dest_addr.sll_addr[1] = 0xff;
@@ -170,12 +217,12 @@ int Pinet::raw_broadcast() {
     ethhdr* eth_hdr = (ethhdr*)packet;
 
     // Write interface MAC address to ethernet header 
-    eth_hdr->h_source[0] = ((uint8_t *)&if_mac.ifr_hwaddr.sa_data)[0];
-	eth_hdr->h_source[1] = ((uint8_t *)&if_mac.ifr_hwaddr.sa_data)[1];
-	eth_hdr->h_source[2] = ((uint8_t *)&if_mac.ifr_hwaddr.sa_data)[2];
-	eth_hdr->h_source[3] = ((uint8_t *)&if_mac.ifr_hwaddr.sa_data)[3];
-	eth_hdr->h_source[4] = ((uint8_t *)&if_mac.ifr_hwaddr.sa_data)[4];
-	eth_hdr->h_source[5] = ((uint8_t *)&if_mac.ifr_hwaddr.sa_data)[5];
+    eth_hdr->h_source[0] = ((uint8_t *)&ifr.ifr_hwaddr.sa_data)[0];
+	eth_hdr->h_source[1] = ((uint8_t *)&ifr.ifr_hwaddr.sa_data)[1];
+	eth_hdr->h_source[2] = ((uint8_t *)&ifr.ifr_hwaddr.sa_data)[2];
+	eth_hdr->h_source[3] = ((uint8_t *)&ifr.ifr_hwaddr.sa_data)[3];
+	eth_hdr->h_source[4] = ((uint8_t *)&ifr.ifr_hwaddr.sa_data)[4];
+	eth_hdr->h_source[5] = ((uint8_t *)&ifr.ifr_hwaddr.sa_data)[5];
     
     // Write FF:FF:FF:FF (broadcast MAC address) to ethernet header 
     eth_hdr->h_dest[0] = 0xff;
@@ -185,32 +232,40 @@ int Pinet::raw_broadcast() {
     eth_hdr->h_dest[4] = 0xff;
     eth_hdr->h_dest[5] = 0xff;
     
-    eth_hdr->h_proto = htons(ETH_P_IP);
+    eth_hdr->h_proto = htons(0x00ff);//htons(ETH_P_IP);
 
     // PINET header (first four bytes are 'ff')
-    pinethdr* pinet_hdr = (pinethdr*)(packet + sizeof(ethhdr));
+    Pinet::broadcast_hdr* pinet_hdr = (Pinet::broadcast_hdr*)(packet + sizeof(ethhdr));
+    /*
     pinet_hdr->identifier[0] = 0xff;
     pinet_hdr->identifier[1] = 0xff;
     pinet_hdr->identifier[2] = 0xff;
     pinet_hdr->identifier[3] = 0xff;
+    */
 
-    // PINET header - sie
+    // PINET header - size
     int payload_size = message.size();
     pinet_hdr->payload_size = htonl(payload_size);
 
+    // PINET header - ip, in bytes
+    pinet_hdr->ip_addr = inet_aton(ip_bytes, ifr->if_addr);
+
+    // PINET header - port, in bytes
+    pinet_hdr->tcp_listen_port = htons(TCP_LISTEN_PORT);
+
     // Write message 
-    char* payload = (char *)pinet_hdr + sizeof(pinethdr);
+    char* payload = (char *)pinet_hdr + sizeof(Pinet::broadcast_hdr);
     memcpy(payload, message.c_str(), message.size());
     
     // Send (Broadcast) packet
-    if (sendto(raw_socket, packet, sizeof(packet),  0, (sockaddr *)&dest_addr, sizeof(sockaddr_ll)) < 0) {
+    if (sendto(raw_socket, packet, sizeof(packet), 0, (sockaddr *)&dest_addr, sizeof(sockaddr_ll)) < 0) {
         std::cout << errno << std::endl;
         perror("Failed to send broadcast message"); 
         return -1;
-    }
-    
+    } 
     return 0;
 };
+
 std::string Pinet::tcp_await() {
     char buffer[1024];
     int valread = (int) read(tcp_socket, buffer, 1024);
